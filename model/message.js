@@ -8,6 +8,7 @@ const MessageScream = new mongoose.Schema({
     default: Date.now,
   },
   from: String,
+  message: String,
 });
 
 module.exports = mongoose.model("message", MessageScream);
