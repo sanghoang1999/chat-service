@@ -88,11 +88,15 @@ sockets.init = function (server) {
       cb(mess);
       //io.to(socket.id).emit("list_mess", mess, to, list);
     });
-    socket.on("sendmessage", async (message, listUserChat) => {
+    socket.on("sendmessage", async (message) => {
       const newMess = Message(message);
+      const userPm = User.findOne({ handle: message.from }).select(
+        "_id handle imageurl status "
+      );
       await newMess.save();
+      const userSend = await userPm;
       console.log(newMess);
-      io.to(newMess.to).emit("serviceMessage", newMess, listUserChat);
+      io.to(newMess.to).emit("serviceMessage", newMess, userSend);
     });
     socket.on("closeChat", async (idUserTo) => {
       let user = await User.findById({ _id: userId._id });
