@@ -2,6 +2,11 @@ const socket = require("socket.io");
 var socketioJwt = require("socketio-jwt");
 const Message = require("../model/message");
 const User = require("../model/user");
+const NodeRSA = require("node-rsa");
+const AWS = require("../controller/aws-e3/e3-wrapper");
+const RSA = require("../controller/cypher/rsa-wrapper");
+const AES = require("../controller/cypher/aes-wrapper");
+const CryptoJs = require("crypto-js");
 const {
   createUser,
   getListFriends,
@@ -9,6 +14,32 @@ const {
 } = require("../controller/userController");
 const { getMessage } = require("../controller/messageControoler");
 let sockets = {};
+let listAesKeys = {};
+
+function checkExist(lst, a, b) {
+  let isExist = false;
+  for (let key in lst) {
+    if (key === a + b || key === b + a) {
+      isExist = true;
+    }
+  }
+  return isExist;
+}
+function removeKey(lst, a, b) {
+  if (lst[a + b]) {
+    delete lst[a + b];
+  } else delete lst[b + a];
+}
+function getAesKey(lsb, a, b) {
+  return lsb[a + b] ? lsb[a + b] : lsb[b + a];
+}
+function insertKey(lsb, a, b, rsa) {
+  if (checkExist(a, b)) {
+    return false;
+  }
+  lsb[a + b] = rsa;
+  return true;
+}
 let listUserOnline = [];
 sockets.init = function (server) {
   let io = socket
@@ -22,6 +53,8 @@ sockets.init = function (server) {
   );
 
   io.on("connection", async (socket) => {
+    socket.rsaKey = {};
+    socket.aesKey = {};
     const { handle, imageurl } = socket.decoded_token;
     console.log("join " + handle);
     socket.join(socket.decoded_token.handle);
@@ -38,27 +71,9 @@ sockets.init = function (server) {
 
     const listName = friends.friends.map((item) => item.user.handle);
     listUserOnline.unshift({ handle, imageurl, _id: userId._id });
-    // gui list ban be cua nguoi dung
     io.to(handle).emit("friends", friends);
 
-    // neu nguoi dung moi online co ban be thi gui thong bao toi ban be cua ban
-    // if (
-    //   friends.friends.findIndex(
-    //     (item) => item.user._id.toString() === userId._id.toString()
-    //   ) !== -1
-    // ) {
-    //   console.log("friends");
-    //   listName.map((user) => {
-    //     io.to(user).emit("friend_join", userId._id);
-    //   });
-    // }
-
-    // const listGuestOfUser = listUserOnline.filter(
-    //   (item) =>
-    //     friends.friends.findIndex((f) => f.user.handle === item.handle) === -1
-    // );
     console.log("list user online");
-    console.log(listUserOnline);
     setTimeout(() => {
       io.emit("join", listUserOnline, socket.id);
     }, 500);
@@ -82,32 +97,104 @@ sockets.init = function (server) {
     socket.on("makeFriend", async (idTo) => {
       const friends = await addFriend(userId, idTo);
     });
+    socket.on("get_connection", async (to, cb) => {
+      console.log("cc");
+      console.log(socket.aesKey);
+
+      if (!checkExist(socket.rsaKey, socket.id, to)) {
+        const pairKey = RSA.generateKey();
+        insertKey(socket.rsaKey, socket.id, to, pairKey);
+
+        cb(pairKey.publicKey, false);
+      } else {
+        cb(getAesKey(listAesKeys, socket.id, to), true);
+      }
+    });
+    socket.on("send_aesKey", (rsaEncryptedAesKey, reciver, cb) => {
+      try {
+        let PrivateKey = new NodeRSA(
+          getAesKey(socket.rsaKey, socket.id, reciver).privateKey
+        );
+        PrivateKey.setOptions({ encryptionScheme: "pkcs1" });
+        const keyAES = PrivateKey.decrypt(rsaEncryptedAesKey, "utf8");
+
+        if (!checkExist(reciver, socket.id)) {
+          insertKey(listAesKeys, reciver, socket.id, JSON.parse(keyAES));
+        }
+
+        console.log(reciver, socket.id);
+        if (reciver !== socket.id) {
+          console.log(reciver);
+          io.to(reciver).emit("recive_aseKey", socket.id, JSON.parse(keyAES));
+        }
+        cb();
+      } catch (error) {
+        console.log(error);
+      }
+    });
     socket.on("get_message", async (from, to, cb) => {
       const mess = await getMessage(from, to);
-      console.log(mess);
       cb(mess);
-      //io.to(socket.id).emit("list_mess", mess, to, list);
     });
-    socket.on("sendmessage", async (message) => {
-      const newMess = Message(message);
-      const userPm = User.findOne({ handle: message.from }).select(
+    socket.on("sendImage", async (image, to, cb) => {
+      let data = AES.decrypt(image, getAesKey(listAesKeys, socket.id, to));
+      var stored = await AWS.uploadImage(data);
+      let plainMsg = {
+        from: socket.id,
+        to: to,
+        message: stored.Location,
+        type: "image",
+      };
+
+      cb(plainMsg);
+      const newMess = Message(plainMsg);
+      let messPromise = newMess.save();
+
+      let cypherMsg = AES.encrypt(
+        JSON.stringify(plainMsg),
+        getAesKey(listAesKeys, socket.id, to)
+      );
+
+      const userPm = User.findOne({ handle: plainMsg.from }).select(
+        "_id handle imageurl status "
+      );
+      await messPromise;
+      const userSend = await userPm;
+      if (socket.id !== to) {
+        io.to(newMess.to).emit("serviceMessage", cypherMsg, userSend);
+      }
+    });
+    socket.on("sendmessage", async (message, to) => {
+      console.log(message);
+      console.log(socket.aesKey[to]);
+      let msgDecrypt = AES.decrypt(
+        message,
+        getAesKey(listAesKeys, socket.id, to),
+        "Utf8"
+      );
+      console.log(message);
+      console.log(msgDecrypt);
+      plainMsg = JSON.parse(msgDecrypt);
+      console.log(plainMsg);
+      const newMess = Message(plainMsg);
+      const userPm = User.findOne({ handle: plainMsg.from }).select(
         "_id handle imageurl status "
       );
       await newMess.save();
       const userSend = await userPm;
-      console.log(newMess);
-      io.to(newMess.to).emit("serviceMessage", newMess, userSend);
+      io.to(newMess.to).emit("serviceMessage", message, userSend);
     });
-    socket.on("closeChat", async (idUserTo) => {
+
+    socket.on("closeChat", async (idUserTo, to) => {
+      //removeKey(socket.rsaKey, socket.id, to);
       let user = await User.findById({ _id: userId._id });
+      console.log(socket.aesKey);
       console.log("close");
-      console.log(user);
       user.friends.forEach((item) => {
         if (item.user.toString() === idUserTo.toString()) {
           item.priority++;
         }
       });
-      console.log(user);
       await user.save();
     });
   });

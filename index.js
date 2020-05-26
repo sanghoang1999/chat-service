@@ -7,7 +7,8 @@ app.use(cors());
 const connectDB = require("./config/mongoDB");
 
 connectDB();
-
+global.rsaKey = {};
+global.aesKey = {};
 app.use(express.json());
 
 const PORT = process.env.PORT || 4600;

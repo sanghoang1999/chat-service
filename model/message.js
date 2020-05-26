@@ -9,6 +9,10 @@ const MessageScream = new mongoose.Schema({
   },
   from: String,
   message: String,
+  type: {
+    type: String,
+    default: "text",
+  },
 });
 
 module.exports = mongoose.model("message", MessageScream);
