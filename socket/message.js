@@ -137,8 +137,8 @@ sockets.init = function (server) {
       cb(mess);
     });
     socket.on("sendImage", async (image, to, cb) => {
-      let data = AES.decrypt(image, getAesKey(listAesKeys, socket.id, to));
-      var stored = await AWS.uploadImage(data);
+      // let data = AES.decrypt(image, getAesKey(listAesKeys, socket.id, to));
+      var stored = await AWS.uploadImage(image);
       let plainMsg = {
         from: socket.id,
         to: to,
@@ -150,10 +150,10 @@ sockets.init = function (server) {
       const newMess = Message(plainMsg);
       let messPromise = newMess.save();
 
-      let cypherMsg = AES.encrypt(
-        JSON.stringify(plainMsg),
-        getAesKey(listAesKeys, socket.id, to)
-      );
+      // let cypherMsg = AES.encrypt(
+      //   JSON.stringify(plainMsg),
+      //   getAesKey(listAesKeys, socket.id, to)
+      // );
 
       const userPm = User.findOne({ handle: plainMsg.from }).select(
         "_id handle imageurl status "
@@ -161,28 +161,28 @@ sockets.init = function (server) {
       await messPromise;
       const userSend = await userPm;
       if (socket.id !== to) {
-        io.to(newMess.to).emit("serviceMessage", cypherMsg, userSend);
+        io.to(newMess.to).emit("serviceMessage", plainMsg, userSend);
       }
     });
     socket.on("sendmessage", async (message, to) => {
-      console.log(message);
-      console.log(socket.aesKey[to]);
-      let msgDecrypt = AES.decrypt(
-        message,
-        getAesKey(listAesKeys, socket.id, to),
-        "Utf8"
-      );
-      console.log(message);
-      console.log(msgDecrypt);
-      plainMsg = JSON.parse(msgDecrypt);
-      console.log(plainMsg);
-      const newMess = Message(plainMsg);
-      const userPm = User.findOne({ handle: plainMsg.from }).select(
+      // console.log(message);
+      // console.log(socket.aesKey[to]);
+      // let msgDecrypt = AES.decrypt(
+      //   message,
+      //   getAesKey(listAesKeys, socket.id, to),
+      //   "Utf8"
+      // );
+      // console.log(message);
+      // console.log(msgDecrypt);
+      // plainMsg = JSON.parse(msgDecrypt);
+      // console.log(plainMsg);
+      const newMess = Message(message);
+      const userPm = User.findOne({ handle: message.from }).select(
         "_id handle imageurl status "
       );
       await newMess.save();
       const userSend = await userPm;
-      io.to(newMess.to).emit("serviceMessage", message, userSend);
+      io.to(newMess.to).emit("serviceMessage", newMess, userSend);
     });
 
     socket.on("closeChat", async (idUserTo, to) => {
